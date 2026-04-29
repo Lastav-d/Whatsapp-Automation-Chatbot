@@ -1,4 +1,4 @@
-# 🚛 Traket Transport Chatbot
+# 🚛 Whatsapp Automation Chatbot
 
 An AI-powered WhatsApp chatbot built using n8n for logistics booking and transporter onboarding.
 
