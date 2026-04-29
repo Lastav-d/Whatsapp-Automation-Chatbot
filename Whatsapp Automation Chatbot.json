@@ -1,0 +1,1635 @@
+{
+  "name": "Traket Transport Chatbot with Customer and Transporter Booking System",
+  "nodes": [
+    {
+      "parameters": {
+        "options": {
+          "responseMode": "responseNodes"
+        }
+      },
+      "id": "",
+      "name": "Chat Trigger",
+      "type": "@n8n/n8n-nodes-langchain.chatTrigger",
+      "typeVersion": 1.4,
+      "position": [
+        -1136,
+        832
+      ],
+      "webhookId": ""
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Sheet1",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/your_document_id/edit#gid=0"
+        },
+        "filtersUI": {
+          "values": [
+            {
+              "lookupColumn": "session_id",
+              "lookupValue": "={{$json.sessionId}}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "id": "",
+      "name": "Lookup Session",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        1728,
+        208
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "BjUcdlP6hEurCvO4",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {
+          "clashHandling": {
+            "values": {
+              "resolveClash": "preferInput1"
+            }
+          }
+        }
+      },
+      "id": "",
+      "name": "Combine Chat and Session",
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        1968,
+        320
+      ],
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "// ================= SAFE INPUT =================\nconst chat = $node[\"WhatsApp Trigger3\"].json;\n\nlet rawMessage = \"\";\nconst msg = chat.messages?.[0];\n\nif (msg?.type === \"text\") {\n  rawMessage = msg.text?.body || \"\";\n}\nelse if (msg?.type === \"interactive\") {\n  rawMessage = msg.interactive?.button_reply?.id || \"\";\n}\n\nif (typeof rawMessage === \"object\") {\n  rawMessage = rawMessage?.text || rawMessage?.value || \"\";\n}\n\nconst message = String(rawMessage).trim();\nconst lowerMessage = message.toLowerCase();\nconst phone = chat.messages?.[0]?.from || \"unknown_user\";\n\n// ================= SHEET DATA =================\nconst items = $input.all();\n\nlet row = {};\nlet normalizedPhone = phone.slice(-10);\n\nlet filteredItems = items.filter(item => {\n  let sheetPhone = String(item.json.phone || \"\").slice(-10);\n  return sheetPhone === normalizedPhone;\n});\n\nif (filteredItems.length > 0) {\n  filteredItems.sort((a, b) => {\n    return new Date(b.json.updated_at) - new Date(a.json.updated_at);\n  });\n  row = filteredItems[0].json;\n}\n\n// ================= FORCE RESET ON HI =================\nif ([\"hi\",\"hello\",\"start\",\"restart\"].includes(lowerMessage)) {\n\n  const newSessionId = `${phone}_${Date.now()}`;\n\n  return [\n    {\n      json: {\n        user_id: newSessionId,\n        phone: phone,\n        state: \"main_menu\",\n        updated_at: new Date().toISOString(),\n        response:\n          \"🙏 *Welcome to Traket Transport* 🚛\\n\\n\" +\n          \"We provide reliable logistics solutions across India 🇮🇳\\n\\n\" +\n          \"👉 Please select your requirement:\\n\\n\" +\n          \"1️⃣ Book a Vehicle (Customer)\\n\" +\n          \"2️⃣ Provide Vehicle (Transporter)\\n\" +\n          \"3️⃣ Support\\n\\n\" +\n          \"Reply with *1, 2 or 3*\",\n        flowType: \"\",\n        data: \"{}\"\n      }\n    }\n  ];\n}\n\n// ================= OPTION MAPPINGS =================\nconst vehicleTypeMap = {\n  \"1\": \"Tempo\",\n  \"2\": \"Truck\",\n  \"3\": \"Container\",\n  \"4\": \"Trailer / ODC\"\n};\n\nconst cargoTypeMap = {\n  \"1\": \"Domestic\",\n  \"2\": \"Import\",\n  \"3\": \"Export\"\n};\n\nconst vehicleCategoryMap = {\n  \"tempo_type\": \"Tempo\",\n  \"truck_type\": \"Truck\",\n  \"container_type\": \"Container\"\n};\n\nconst tempoSubTypeMap = {\n  \"1\": \"Pickup – 1 MT (8×5×5 ft)\",\n  \"2\": \"14 Ft – 3 MT (14×6×6 ft)\",\n  \"3\": \"19 Ft – 6 MT (19×6×6 ft)\",\n  \"4\": \"22 Ft – 9 MT (22×7×7 ft)\"\n};\n\nconst containerSubTypeMap = {\n  \"1\": \"20 Ft Container\",\n  \"2\": \"32 Ft Single Axle\",\n  \"3\": \"32 Ft Multi Axle\"\n};\n\nconst truckSubTypeMap = {\n  \"1\": \"16 Ft Truck\",\n  \"2\": \"19 Ft Truck\",\n  \"3\": \"22 Ft Truck\",\n  \"4\": \"24 Ft Truck\"\n};\n\n// ================= STATE =================\nlet state = row.state || \"start\";\n\nlet oldData = {};\ntry {\n  oldData = typeof row.data === \"string\" ? JSON.parse(row.data) : (row.data || {});\n} catch {\n  oldData = {};\n}\n\nlet data = { ...oldData };\nlet response = \"\";\n\n// ================= MAIN MENU =================\nif (state === \"main_menu\") {\n\n  if (message === \"1\") {\n    state = \"loading_pincode\";\n    data.flowType = \"book\";\n    response = \"📍 Please enter your *Loading Pincode* (6 digits)\";\n  }\n\n  else if (message === \"2\") {\n    state = \"vp1_contact_name\";\n    data.flowType = \"provider\";\n    response = \"👤 Please enter *Driver Name*\";\n  }\n\n  else if (message === \"3\") {\n    state = \"support_flow\";\n    data.flowType = \"support\";\n    response = \"*Hi, Welcome to Traket Transport*\\n\" +\n                \"*Please Contact on +91 9820500159 if your querry doesnt matches                     with the above two options*\\n\"+\n                \"Thank you so much for your precious time\";       \n  }\n\n  else {\n    response = \"⚠️ Please reply with *1, 2 or 3*\";\n  }\n}\n\n// ================= PROVIDER FLOW =================\nelse if (state === \"vp1_contact_name\") {\n  data.provider_driverName = message;\n  state = \"vp2_vehicle_type\";\n  response =\n    \"🚛 Select Vehicle Type:\\n\\n\" +\n    \"1️⃣ Tempo\\n\" +\n    \"2️⃣ Truck\\n\" +\n    \"3️⃣ Container\\n\" +\n    \"4️⃣ Trailer / ODC\\n\\n\" +\n    \"Reply with option number\";\n}\n\nelse if (state === \"vp2_vehicle_type\") {\n  if ([\"1\",\"2\",\"3\",\"4\"].includes(message)) {\n    data.provider_vehicleType = vehicleTypeMap[message];\n    state = \"vp3_vehicle_number\";\n    response = \"🔢 Please enter *Vehicle Number*\";\n  } else {\n    response = \"⚠️ Enter *1, 2, 3 or 4* only\";\n  }\n}\n\nelse if (state === \"vp3_vehicle_number\") {\n  data.provider_vehicleNumber = message;\n  state = \"vp3_capacity\";\n  response = \"⚖️ Enter *Vehicle Capacity*\";\n}\n\nelse if (state === \"vp3_capacity\") {\n  data.provider_capacity = message;\n  state = \"vp3_routes\";\n  response = \"🛣️ Enter *Operating Routes* (City to City)\";\n}\n\nelse if (state === \"vp3_routes\") {\n  data.provider_routes = message;\n  state = \"vp3_availability\";\n  response = \"📅 Enter *Available From Date*\";\n}\n\nelse if (state === \"vp3_availability\") {\n  data.provider_availability = message;\n  state = \"vp_driver_phone\";\n  response = \"📞 Enter *Driver Phone Number*\";\n}\n\nelse if (state === \"vp_driver_phone\") {\n  data.provider_driverPhone = message;\n  state = \"vp_current_location\";\n  response = \"📍 Enter *Current Location*\";\n}\n\nelse if (state === \"vp_current_location\") {\n  data.provider_currentLocation = message;\n  state = \"vp_notes\";\n  response = \"📝 Any additional notes? (Type *NA* if none)\";\n}\n\nelse if (state === \"vp_notes\") {\n  data.provider_notes = message;\n  state = \"vp4_documents\";\n  response = \"📄 Type *YES* if all documents are available (RC, Insurance, Permit)\";\n}\n\nelse if (state === \"vp4_documents\") {\n\n  if (lowerMessage === \"yes\") {\n    data.provider_documents = \"YES\";\n    state = \"cta_menu\"; // ✅ changed\n\n    response =\n      \"🚛 Vehicle Type: \" + (data.provider_vehicleType || \"\") + \"\\n\" +\n      \"📍 Routes: \" + (data.provider_routes || \"\") + \"\\n\" +\n      \"📅 Available From: \" + (data.provider_availability || \"\") + \"\\n\\n\" +\n      \"Our operations team will contact you shortly for onboarding.\\n\" +\n      \"Thank you for partnering with us 🤝\";\n\n  } else {\n    data.provider_documents = \"NO\";\n    response = \"⚠️ Please type *YES* to proceed\";\n  }\n}\n\n// ================= CUSTOMER FLOW =================\nelse if (state === \"loading_pincode\") {\n\n  if (!/^[1-8][0-9]{5}$/.test(message)) {\n    response = \"❌ Invalid Pincode. Please enter a valid 6-digit pincode.\";\n  } else {\n    data.loadingPin = message;\n    state = \"unloading_pincode\";\n    response = \"📍 Please enter your *Unloading Pincode*\";\n  }\n}\n\nelse if (state === \"unloading_pincode\") {\n\n  if (!/^[1-8][0-9]{5}$/.test(message)) {\n    response = \"❌ Invalid Pincode. Please try again.\";\n  } else {\n    data.unloadingPin = message;\n    state = \"cargo_type\";\n    response =\n      \"📦 Select Cargo Type:\\n\\n\" +\n      \"1️⃣ Domestic\\n\" +\n      \"2️⃣ Import\\n\" +\n      \"3️⃣ Export\\n\\n\" +\n      \"Reply with *1 / 2 / 3*\";\n  }\n}\n\nelse if (state === \"cargo_type\") {\n\n  if ([\"1\",\"2\",\"3\"].includes(message)) {\n    data.cargoType = cargoTypeMap[message];\n    state = \"vehicle_category\";\n    response =\n      \"🚛 Select Vehicle Type:\\n\\n\" +\n      \"1️⃣ Tempo\\n\" +\n      \"2️⃣ Truck\\n\" +\n      \"3️⃣ Container\\n\" +\n      \"4️⃣ ODC\\n\\n\" +\n      \"Reply with option number\";\n  } else {\n    response = \"⚠️ Enter *1, 2 or 3*\";\n  }\n}\n\nelse if (state === \"vehicle_category\") {\n\n  if (message === \"1\") {\n    state = \"tempo_type\";\n    response =\n      \"🚚 Please choose Tempo Size 👇\\n\\n\" +\n      \"1️⃣ Pickup – 1 MT (8×5×5 ft)\\n\" +\n      \"2️⃣ 14 Ft – 3 MT (14×6×6 ft)\\n\" +\n      \"3️⃣ 19 Ft – 6 MT (19×6×6 ft)\\n\" +\n      \"4️⃣ 22 Ft – 9 MT (22×7×7 ft)\\n\\n\" +\n      \"Reply with option number\";\n  }\n  else if (message === \"2\") {\n    state = \"truck_type\";\n    response =\n      \"🚛 Please choose Truck Type 👇\\n\\n\" +\n      \"1️⃣ 16 Ft Truck\\n\" +\n      \"2️⃣ 19 Ft Truck\\n\" +\n      \"3️⃣ 22 Ft Truck\\n\" +\n      \"4️⃣ 24 Ft Truck\\n\\n\" +\n      \"Reply with option number\";\n  }\n  else if (message === \"3\") {\n    state = \"container_type\";\n    response =\n      \"📦 Please select Container Type 🚢\\n\\n\" +\n      \"1️⃣ 20 Ft Container\\n\" +\n      \"2️⃣ 32 Ft Single Axle\\n\" +\n      \"3️⃣ 32 Ft Multi Axle\\n\\n\" +\n      \"Reply with option number\";\n  }\n  else if (message === \"4\") {\n    state = \"odc_details\";\n    response = \"⚠️ Enter ODC Details (Material, Size, Weight)\";\n  }\n}\n\n// ================= SUBTYPE =================\nelse if (state === \"tempo_type\") {\n\n  if (tempoSubTypeMap[message]) {\n    data.vehicleType = vehicleCategoryMap[state];\n    data.vehicleSubType = tempoSubTypeMap[message];\n    state = \"material_details\";\n    response = \"📦 Enter Material Details\";\n  } else {\n    response = \"⚠️ Please select a valid option (1-4)\";\n  }\n}\n\nelse if (state === \"container_type\") {\n\n  if (containerSubTypeMap[message]) {\n    data.vehicleType = vehicleCategoryMap[state];\n    data.vehicleSubType = containerSubTypeMap[message];\n    state = \"material_details\";\n    response = \"📦 Enter Material Details\";\n  } else {\n    response = \"⚠️ Please select a valid option (1-3)\";\n  }\n}\n\nelse if (state === \"truck_type\") {\n\n  if (truckSubTypeMap[message]) {\n    data.vehicleType = vehicleCategoryMap[state];\n    data.vehicleSubType = truckSubTypeMap[message];\n    state = \"material_details\";\n    response = \"📦 Enter Material Details\";\n  } else {\n    response = \"⚠️ Please select a valid option (1-4)\";\n  }\n}\n\nelse if (state === \"material_details\") {\n  data.material = message;\n  state = \"loading_date\";\n  response = \"📅 Enter Loading Date\";\n}\n\nelse if (state === \"loading_date\") {\n  data.loadingDate = message;\n  state = \"contact_details\";\n  response =\n    \"👤 Enter details in this format:\\n\\n\" +\n    \"Company Name\\n\" +\n    \"Contact Name\\n\" +\n    \"Phone Number\\n\" +\n    \"Email ID\\n\" +\n    \"Website (or NA)\";\n}\n\nelse if (state === \"contact_details\") {\n\n  const text = message;\n\n  const phoneMatch = text.match(/\\d{10}/);\n  const phoneExtracted = phoneMatch ? phoneMatch[0] : \"\";\n\n  const emailMatch = text.match(/\\S+@\\S+\\.\\S+/);\n  const emailExtracted = emailMatch ? emailMatch[0] : \"NA\";\n\n  let websiteExtracted = \"NA\";\n  if (/www\\.|http/.test(text)) {\n    let webMatch = text.match(/(https?:\\/\\/[^\\s]+|www\\.[^\\s]+)/);\n    websiteExtracted = webMatch ? webMatch[0] : \"NA\";\n  }\n\n  let lines = text.split(/\\n/).map(l => l.trim()).filter(Boolean);\n\n  let company = \"\";\n  let contactName = \"\";\n\n  if (lines.length >= 3) {\n    company = lines[0];\n    contactName = lines[1];\n  } else {\n    let remaining = text\n      .replace(phoneExtracted, \"\")\n      .replace(emailExtracted, \"\")\n      .replace(websiteExtracted, \"\")\n      .trim();\n\n    let parts = remaining.split(/,|-/).map(p => p.trim()).filter(Boolean);\n\n    if (parts.length >= 2) {\n      company = parts[0];\n      contactName = parts[1];\n    }\n  }\n\n  data.company = company;\n  data.contactName = contactName;\n  data.phone = phoneExtracted;\n  data.email = emailExtracted;\n  data.website = websiteExtracted;\n\n  state = \"cta_menu\"; // ✅ changed\n\n  response =\n    \"From :        \" + (data.loadingPin || \"\") + \"\\n\" +\n    \"To :          \" + (data.unloadingPin || \"\") + \"\\n\" +\n    \"Trip :        \" + (data.cargoType || \"\") + \"\\n\" +\n    \"Vehicle :     \" + (data.vehicleType || \"\") + \"\\n\" +\n    \"Sub vehicle : \" + (data.vehicleSubType || \"\") + \"\\n\" +\n    \"Goods type :  \" + (data.material || \"\") + \"\\n\" +\n    \"Loading Date :\" + (data.loadingDate || \"\") + \"\\n\\n\" +\n    \"Name :\" + (data.contactName || \"\") + \"\\n\\n\" +\n    \"Phone Number :\" + (data.phone || \"\") + \"\\n\\n\" +\n    \"Thank you for Partnering with Us 🤝\";\n}\n\nelse if (state === \"support_flow\") {\n\n  state = \"cta_menu\";\n\n  response =\n    \"📞 Our support team will assist you shortly.\\n\\n\" +\n    \"For urgent queries call: +91 9820500159\\n\\n\" +\n    \"Thank you for contacting Traket 🤝\";\n}\n\n// ================= CTA MENU =================\nelse if (state === \"cta_menu\") {\n\n  if (message === \"cta_new\") {\n    state = \"main_menu\";\n    data = {};\n    response =\n      \"🙏 *Welcome to Traket Transport* 🚛\\n\\n\" +\n      \"We provide reliable logistics solutions across India 🇮🇳\\n\\n\" +\n      \"👉 Please select your requirement:\\n\\n\" +\n      \"1️⃣ Book a Vehicle (Customer)\\n\" +\n      \"2️⃣ Provide Vehicle (Transporter)\\n\" +\n      \"3️⃣ Support\\n\\n\" +\n      \"Reply with *1, 2 or 3*\";\n  }\n\n  else if (message === \"cta_ai\") {\n    state = \"ai_chat\";\n    response = \"🤖 Ask me anything about Traket!\";\n  }\n\n  else if (message === \"cta_support\") {\n    state = \"support_flow\";\n    response =\n      \"*Hi, Welcome to Traket Transport*\\n\" +\n      \"*Please Contact on +91 9820500159 if your querry doesnt matches                     with the above two options*\\n\"+\n      \"Thank you so much for your precious time\";\n  }\n\n  else {\n    response = \"⚠️ Please select an option\";\n  }\n}\n\n// ================= DEFAULT =================\nelse {\n  response = \"👋 Type *Hi* to start again\";\n}\n\n// ================= OUTPUT =================\nconst output = { ...row };\n\noutput.user_id = row.user_id || `${phone}_${Date.now()}`;\noutput.phone = phone;\noutput.state = state;\noutput.updated_at = new Date().toISOString();\noutput.response = response;\n\noutput.flowType = data.flowType ?? row.flowType ?? \"\";\noutput.data = JSON.stringify(data);\n\nreturn [\n  {\n    json: output\n  }\n];"
+      },
+      "id": "",
+      "name": "Process Conversation",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        -80,
+        736
+      ]
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "Sheet1",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/your_document_id/edit#gid=0"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "session_id": "={{$json.session_id}}",
+            "current_step": "={{$json.current_step}}",
+            "audience": "={{$json.audience}}",
+            "loading_pincode": "={{$json.loading_pincode}}",
+            "unloading_pincode": "={{$json.unloading_pincode}}",
+            "cargo_type": "={{$json.cargo_type}}",
+            "shipment_type": "={{$json.shipment_type}}",
+            "vehicle_type": "={{$json.vehicle_type}}",
+            "vehicle_subtype": "={{$json.vehicle_subtype}}",
+            "material_name": "={{$json.material_name}}",
+            "weight": "={{$json.weight}}",
+            "packages": "={{$json.packages}}",
+            "loading_date": "={{$json.loading_date}}",
+            "company_name": "={{$json.company_name}}",
+            "contact_person": "={{$json.contact_person}}",
+            "odc_flag": "={{$json.odc_flag}}",
+            "fcl_container": "={{$json.fcl_container}}",
+            "created_at": "={{$json.created_at}}",
+            "updated_at": "={{$json.updated_at}}"
+          },
+          "matchingColumns": [
+            "session_id"
+          ],
+          "schema": [
+            {
+              "id": "session_id",
+              "displayName": "session_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "current_step",
+              "displayName": "current_step",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "audience",
+              "displayName": "audience",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "loading_pincode",
+              "displayName": "loading_pincode",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "unloading_pincode",
+              "displayName": "unloading_pincode",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "cargo_type",
+              "displayName": "cargo_type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "shipment_type",
+              "displayName": "shipment_type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "vehicle_type",
+              "displayName": "vehicle_type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "vehicle_subtype",
+              "displayName": "vehicle_subtype",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "material_name",
+              "displayName": "material_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "weight",
+              "displayName": "weight",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "packages",
+              "displayName": "packages",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "loading_date",
+              "displayName": "loading_date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "company_name",
+              "displayName": "company_name",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "contact_person",
+              "displayName": "contact_person",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "phone_number",
+              "displayName": "phone_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "odc_flag",
+              "displayName": "odc_flag",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "fcl_container",
+              "displayName": "fcl_container",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "vehicle_number",
+              "displayName": "vehicle_number",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "vehicle_capacity",
+              "displayName": "vehicle_capacity",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "operating_routes",
+              "displayName": "operating_routes",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "availability_date",
+              "displayName": "availability_date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "created_at",
+              "displayName": "created_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "updated_at",
+              "displayName": "updated_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "id": "",
+      "name": "Save Session",
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        2224,
+        384
+      ],
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "BjUcdlP6hEurCvO4",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "",
+              "name": "reply_text",
+              "value": "={{ $json.reply_text }}",
+              "type": "string"
+            },
+            {
+              "id": "",
+              "name": "session_id",
+              "value": "={{ $json.session_id }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1776,
+        16
+      ],
+      "id": "",
+      "name": "Edit Fields"
+    },
+    {
+      "parameters": {
+        "message": "={{ $node[\"Process Conversation\"].json.response }}",
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.chat",
+      "typeVersion": 1.3,
+      "position": [
+        1424,
+        192
+      ],
+      "id": "09e6cf58-4e46-4cd7-a1d7-5616de5d074e",
+      "name": "Chat",
+      "webhookId": "",
+      "alwaysOutputData": false
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        2096,
+        160
+      ],
+      "id": "ae1891d1-3815-4059-a6bd-cc8798ed1970",
+      "name": "Execute a SQL query"
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "",
+          "mode": "list",
+          "cachedResultName": "users_master",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/your_document_id/edit#gid=1813730359"
+        },
+        "filtersUI": {
+          "values": [
+            {
+              "lookupColumn": "phone",
+              "lookupValue": "={{$node[\"WhatsApp Trigger3\"].json.messages[0].from}}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        -256,
+        736
+      ],
+      "id": "57c527ba-0d41-47d4-b25d-c18f2d3ee576",
+      "name": "Get Master Row",
+      "alwaysOutputData": true,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "BjUcdlP6hEurCvO4",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "",
+          "mode": "list",
+          "cachedResultName": "users_master",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/your_document_id/edit#gid=1813730359"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "user_id": "={{ $json.user_id }}",
+            "state": "={{ $json.state }}",
+            "updated_at": "={{ $json.updated_at }}",
+            "flowType": "={{ $node[\"Process Conversation\"].json.flowType }}",
+            "phone": "={{ $json.phone }}",
+            "data": "={{$json.data}}"
+          },
+          "matchingColumns": [
+            "user_id"
+          ],
+          "schema": [
+            {
+              "id": "user_id",
+              "displayName": "user_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "phone",
+              "displayName": "phone",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "flowType",
+              "displayName": "flowType",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "state",
+              "displayName": "state",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "data",
+              "displayName": "data",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "updated_at",
+              "displayName": "updated_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        112,
+        736
+      ],
+      "id": "a2fd6c85-d252-4f48-b158-334a343a9a74",
+      "name": "Save Master Session",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "BjUcdlP6hEurCvO4",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "562f9153-3fd3-4ab6-bf4d-044daba7a9be",
+              "leftValue": "={{ $json.flowType }}",
+              "rightValue": "book",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "or"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        -624,
+        256
+      ],
+      "id": "b1905429-fc62-405a-99a1-d6a41319eca2",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "BookVehicle",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/your_document_id/edit#gid=0"
+        },
+        "filtersUI": {
+          "values": [
+            {
+              "lookupColumn": "user_id",
+              "lookupValue": "={{ $json.user_id }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        720,
+        512
+      ],
+      "id": "dc452fd4-68b3-40dc-acb5-3023de675373",
+      "name": "BookVehicleGetRows",
+      "alwaysOutputData": true,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "BjUcdlP6hEurCvO4",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "gid=0",
+          "mode": "list",
+          "cachedResultName": "BookVehicle",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/your_document_id/edit#gid=0"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "user_id": "={{ $('Process Conversation').item.json.user_id }}",
+            "state": "={{ $('Process Conversation').item.json.state }}",
+            "updated_at": "={{ $node[\"Process Conversation\"].json.updated_at }}",
+            "loadingPin": "={{ JSON.parse($node[\"Process Conversation\"].json.data || \"{}\").loadingPin \n   || $node[\"BookVehicleGetRows\"].json.loadingPin }}",
+            "unloadingPin": "={{ JSON.parse($node[\"Process Conversation\"].json.data || \"{}\").unloadingPin \n   || $node[\"BookVehicleGetRows\"].json.unloadingPin }}",
+            "cargoType": "={{ JSON.parse($node[\"Process Conversation\"].json.data || \"{}\").cargoType \n   || $node[\"BookVehicleGetRows\"].json.cargoType }}",
+            "vehicleType": "={{ JSON.parse($node[\"Process Conversation\"].json.data || \"{}\").vehicleType \n   || $node[\"BookVehicleGetRows\"].json.vehicleType }}",
+            "vehicleSubType": "={{ JSON.parse($node[\"Process Conversation\"].json.data || \"{}\").vehicleSubType \n   || $node[\"BookVehicleGetRows\"].json.vehicleSubType }}",
+            "material": "={{ JSON.parse($node[\"Process Conversation\"].json.data || \"{}\").material \n   || $node[\"BookVehicleGetRows\"].json.material }}",
+            "loadingDate": "={{ JSON.parse($node[\"Process Conversation\"].json.data || \"{}\").loadingDate \n   || $node[\"BookVehicleGetRows\"].json.loadingDate }}",
+            "company": "={{ JSON.parse($node[\"Process Conversation\"].json.data || \"{}\").company \n   || $node[\"BookVehicleGetRows\"].json.company }}",
+            "contactName": "={{ JSON.parse($node[\"Process Conversation\"].json.data || \"{}\").contactName \n   || $node[\"BookVehicleGetRows\"].json.contactName }}",
+            "phone": "={{ JSON.parse($node[\"Process Conversation\"].json.data || \"{}\").phone \n   || $node[\"BookVehicleGetRows\"].json.phone }}",
+            "email": "={{ JSON.parse($node[\"Process Conversation\"].json.data || \"{}\").email \n   || $node[\"BookVehicleGetRows\"].json.email }}",
+            "website": "={{ JSON.parse($node[\"Process Conversation\"].json.data || \"{}\").website \n   || $node[\"BookVehicleGetRows\"].json.website }}"
+          },
+          "matchingColumns": [
+            "user_id"
+          ],
+          "schema": [
+            {
+              "id": "user_id",
+              "displayName": "user_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "state",
+              "displayName": "state",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "loadingPin",
+              "displayName": "loadingPin",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "unloadingPin",
+              "displayName": "unloadingPin",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "cargoType",
+              "displayName": "cargoType",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "vehicleType",
+              "displayName": "vehicleType",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "vehicleSubType",
+              "displayName": "vehicleSubType",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "material",
+              "displayName": "material",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "loadingDate",
+              "displayName": "loadingDate",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "contactName",
+              "displayName": "contactName",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "phone",
+              "displayName": "phone",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "company",
+              "displayName": "company",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "email",
+              "displayName": "email",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "website",
+              "displayName": "website",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "updated_at",
+              "displayName": "updated_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        912,
+        512
+      ],
+      "id": "08ce0862-f153-4ab1-959b-c582f94f41d6",
+      "name": "BookVehicleAppendUpdateRow",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "BjUcdlP6hEurCvO4",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "",
+          "mode": "list",
+          "cachedResultName": "ProvideVehicle",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/your_document_id/edit#gid=576719393"
+        },
+        "filtersUI": {
+          "values": [
+            {
+              "lookupColumn": "user_id",
+              "lookupValue": "={{ $json.user_id }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        720,
+        672
+      ],
+      "id": "9657cef1-2afc-4d67-9c34-df202347231f",
+      "name": "ProvideVehicleGetRows",
+      "alwaysOutputData": true,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "BjUcdlP6hEurCvO4",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "",
+          "mode": "list",
+          "cachedResultName": "ProvideVehicle",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/your_document_id/edit#gid=576719393"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "user_id": "={{ $('Process Conversation').item.json.user_id }}",
+            "state": "={{ $('Process Conversation').item.json.state }}",
+            "updated_at": "={{ $node[\"Process Conversation\"].json.updated_at }}",
+            "vehicleType": "={{ (JSON.parse($node[\"Process Conversation\"].json.data || \"{}\").provider_vehicleType) || ($node[\"ProvideVehicleGetRows\"].json.vehicleType) }}",
+            "vehicleNumber": "={{ (JSON.parse($node[\"Process Conversation\"].json.data || \"{}\").provider_vehicleNumber) || ($node[\"ProvideVehicleGetRows\"].json.vehicleNumber) }}",
+            "driverName": "={{ (JSON.parse($node[\"Process Conversation\"].json.data || \"{}\").provider_driverName) || ($node[\"ProvideVehicleGetRows\"].json.driverName) }}",
+            "capacity": "={{ (JSON.parse($node[\"Process Conversation\"].json.data || \"{}\").provider_capacity) || ($node[\"ProvideVehicleGetRows\"].json.capacity) }}",
+            "routePreference": "={{ (JSON.parse($node[\"Process Conversation\"].json.data || \"{}\").provider_routes) || ($node[\"ProvideVehicleGetRows\"].json.routePreference) }}",
+            "availability": "={{ (JSON.parse($node[\"Process Conversation\"].json.data || \"{}\").provider_availability) || ($node[\"ProvideVehicleGetRows\"].json.availability) }}",
+            "driverPhone": "={{ (JSON.parse($node[\"Process Conversation\"].json.data || \"{}\").provider_driverPhone) || ($node[\"ProvideVehicleGetRows\"].json.driverPhone) }}",
+            "currentLocation": "={{ (JSON.parse($node[\"Process Conversation\"].json.data || \"{}\").provider_currentLocation) || ($node[\"ProvideVehicleGetRows\"].json.currentLocation) }}",
+            "notes": "={{ (JSON.parse($node[\"Process Conversation\"].json.data || \"{}\").provider_capacity) || ($node[\"ProvideVehicleGetRows\"].json.capacity) }}",
+            "documents": "={{ (JSON.parse($node[\"Process Conversation\"].json.data || \"{}\").provider_documents) || ($node[\"ProvideVehicleGetRows\"].json.documents) }}"
+          },
+          "matchingColumns": [
+            "user_id"
+          ],
+          "schema": [
+            {
+              "id": "user_id",
+              "displayName": "user_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "state",
+              "displayName": "state",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "vehicleType",
+              "displayName": "vehicleType",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "vehicleNumber",
+              "displayName": "vehicleNumber",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "driverName",
+              "displayName": "driverName",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "driverPhone",
+              "displayName": "driverPhone",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "currentLocation",
+              "displayName": "currentLocation",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "availability",
+              "displayName": "availability",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "routePreference",
+              "displayName": "routePreference",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "capacity",
+              "displayName": "capacity",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "notes",
+              "displayName": "notes",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "documents",
+              "displayName": "documents",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "updated_at",
+              "displayName": "updated_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        912,
+        672
+      ],
+      "id": "46102552-a26d-4fec-90db-a05f30729052",
+      "name": "ProvideVehicleAppendUpdateRow1",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "BjUcdlP6hEurCvO4",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "rules": {
+          "values": [
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "leftValue": "={{$json.flowType}}",
+                    "rightValue": "book",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals"
+                    },
+                    "id": "65b0c3e1-026b-41e4-80d4-f90b57984131"
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "860c504a-0168-483f-be3d-a74384219ea6",
+                    "leftValue": "={{$json.flowType}}",
+                    "rightValue": "provider",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            },
+            {
+              "conditions": {
+                "options": {
+                  "caseSensitive": true,
+                  "leftValue": "",
+                  "typeValidation": "strict",
+                  "version": 3
+                },
+                "conditions": [
+                  {
+                    "id": "b8589b0b-6739-4d3b-acc4-1030788aa0a9",
+                    "leftValue": "={{$json.flowType}}",
+                    "rightValue": "support",
+                    "operator": {
+                      "type": "string",
+                      "operation": "equals",
+                      "name": "filter.operator.equals"
+                    }
+                  }
+                ],
+                "combinator": "and"
+              }
+            }
+          ]
+        },
+        "options": {
+          "fallbackOutput": "extra"
+        }
+      },
+      "type": "n8n-nodes-base.switch",
+      "typeVersion": 3.4,
+      "position": [
+        304,
+        720
+      ],
+      "id": "3d4c607b-9019-4b5a-8fc8-70582706c8bc",
+      "name": "Switch",
+      "alwaysOutputData": false
+    },
+    {
+      "parameters": {
+        "documentId": {
+          "__rl": true,
+          "value": "",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "",
+          "mode": "list",
+          "cachedResultName": "Support",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/your_document_id/edit#gid=0"
+        },
+        "filtersUI": {
+          "values": [
+            {
+              "lookupColumn": "user_id",
+              "lookupValue": "={{ $json.user_id }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        720,
+        816
+      ],
+      "id": "157cbe65-6646-418d-94aa-33c3843ded04",
+      "name": "SupportGetRows",
+      "alwaysOutputData": true,
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "BjUcdlP6hEurCvO4",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "appendOrUpdate",
+        "documentId": {
+          "__rl": true,
+          "value": "",
+          "mode": "id"
+        },
+        "sheetName": {
+          "__rl": true,
+          "value": "",
+          "mode": "list",
+          "cachedResultName": "Support",
+          "cachedResultUrl": "https://docs.google.com/spreadsheets/d/your_document_id/edit#gid=779593590"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "user_id": "={{ $('Process Conversation').item.json.user_id }}",
+            "updated_at": "={{ $node[\"Process Conversation\"].json.updated_at }}"
+          },
+          "matchingColumns": [
+            "user_id"
+          ],
+          "schema": [
+            {
+              "id": "user_id",
+              "displayName": "user_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true,
+              "removed": false
+            },
+            {
+              "id": "updated_at",
+              "displayName": "updated_at",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.googleSheets",
+      "typeVersion": 4.7,
+      "position": [
+        912,
+        832
+      ],
+      "id": "",
+      "name": "SupportAppendUpdateRow",
+      "credentials": {
+        "googleSheetsOAuth2Api": {
+          "id": "BjUcdlP6hEurCvO4",
+          "name": "Google Sheets account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "send",
+        "phoneNumberId": "",
+        "recipientPhoneNumber": "={{$node[\"WhatsApp Trigger3\"].json.messages[0].from}}",
+        "textBody": "={{$node[\"Process Conversation\"].json.response}}",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.whatsApp",
+      "typeVersion": 1.1,
+      "position": [
+        2176,
+        1056
+      ],
+      "id": "",
+      "name": "Send message",
+      "webhookId": "",
+      "credentials": {
+        "whatsAppApi": {
+          "id": "",
+          "name": "WhatsApp account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "updates": [
+          "messages"
+        ],
+        "options": {}
+      },
+      "type": "n8n-nodes-base.whatsAppTrigger",
+      "typeVersion": 1,
+      "position": [
+        -448,
+        736
+      ],
+      "id": "",
+      "name": "WhatsApp Trigger3",
+      "webhookId": "",
+      "credentials": {
+        "whatsAppTriggerApi": {
+          "id": "",
+          "name": "WhatsApp OAuth account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "",
+              "leftValue": "={{$node[\"Process Conversation\"].json.state}}",
+              "rightValue": "cta_menu",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        1376,
+        1104
+      ],
+      "id": "",
+      "name": "If1"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://graph.facebook.com/v18.0/your_phone_number_id/messages",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer YOUR_ACCESS_TOKEN"            },
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"messaging_product\": \"whatsapp\",\n  \"to\": \"{{ $node['WhatsApp Trigger3'].json.messages[0].from }}\",\n  \"type\": \"interactive\",\n  \"interactive\": {\n    \"type\": \"button\",\n    \"body\": {\n      \"text\": \"👉 What would you like to do next?\"\n    },\n    \"action\": {\n      \"buttons\": [\n        {\n          \"type\": \"reply\",\n          \"reply\": {\n            \"id\": \"cta_new\",\n            \"title\": \"Post New Order\"\n          }\n        },\n        {\n          \"type\": \"reply\",\n          \"reply\": {\n            \"id\": \"cta_ai\",\n            \"title\": \"Know About Traket\"\n          }\n        },\n        {\n          \"type\": \"reply\",\n          \"reply\": {\n            \"id\": \"cta_support\",\n            \"title\": \"Support\"\n          }\n        }\n      ]\n    }\n  }\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        1616,
+        944
+      ],
+      "id": "",
+      "name": "HTTP Request"
+    },
+    {
+      "parameters": {
+        "operation": "send",
+        "phoneNumberId": "",
+        "recipientPhoneNumber": "={{$node[\"WhatsApp Trigger3\"].json.messages[0].from}}",
+        "textBody": "={{$node[\"Process Conversation\"].json.response}}",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.whatsApp",
+      "typeVersion": 1.1,
+      "position": [
+        1168,
+        1088
+      ],
+      "id": "",
+      "name": "Send message1-summary",
+      "webhookId": "",
+      "credentials": {
+        "whatsAppApi": {
+          "id": "",
+          "name": "WhatsApp account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Chat Trigger": {
+      "main": [
+        []
+      ]
+    },
+    "Lookup Session": {
+      "main": [
+        []
+      ]
+    },
+    "Combine Chat and Session": {
+      "main": [
+        []
+      ]
+    },
+    "Process Conversation": {
+      "main": [
+        [
+          {
+            "node": "Save Master Session",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Session": {
+      "main": [
+        []
+      ]
+    },
+    "Edit Fields": {
+      "main": [
+        []
+      ]
+    },
+    "Chat": {
+      "main": [
+        []
+      ]
+    },
+    "Get Master Row": {
+      "main": [
+        [
+          {
+            "node": "Process Conversation",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Save Master Session": {
+      "main": [
+        [
+          {
+            "node": "Switch",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [],
+        []
+      ]
+    },
+    "BookVehicleGetRows": {
+      "main": [
+        [
+          {
+            "node": "BookVehicleAppendUpdateRow",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "BookVehicleAppendUpdateRow": {
+      "main": [
+        [
+          {
+            "node": "Send message1-summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "ProvideVehicleGetRows": {
+      "main": [
+        [
+          {
+            "node": "ProvideVehicleAppendUpdateRow1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "ProvideVehicleAppendUpdateRow1": {
+      "main": [
+        [
+          {
+            "node": "Send message1-summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Switch": {
+      "main": [
+        [
+          {
+            "node": "BookVehicleGetRows",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "ProvideVehicleGetRows",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "SupportGetRows",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Send message1-summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "SupportGetRows": {
+      "main": [
+        [
+          {
+            "node": "SupportAppendUpdateRow",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "SupportAppendUpdateRow": {
+      "main": [
+        [
+          {
+            "node": "Send message1-summary",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "WhatsApp Trigger3": {
+      "main": [
+        [
+          {
+            "node": "Get Master Row",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send message1-summary": {
+      "main": [
+        [
+          {
+            "node": "If1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If1": {
+      "main": [
+        [
+          {
+            "node": "HTTP Request",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        []
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "",
+  "meta": {
+    "instanceId": ""
+  },
+  "id": "",
+  "tags": []
+}
